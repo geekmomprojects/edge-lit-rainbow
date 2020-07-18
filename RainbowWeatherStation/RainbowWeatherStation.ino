@@ -93,14 +93,26 @@ SOFTWARE.
 
 See more at https://thingpulse.com
 */
+#include <FS.h>                     // This needs to be first or it all breaks
+#include "SPIFFS.h"
 
+#ifdef ESP32
+  #include <WiFi.h>
+  #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
+  #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal      
+#endif
 
-// Install the follolling libraries - available in the Arduino library manager.
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiManager.h>
+#ifdef ESP8266
+  #include <ESP8266WiFi.h>
+  #include <ESP8266HTTPClient.h>
+#endif
+
+#include <WiFiManager.h>  //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+
 // JSON Streaming Parser library available in lib manager or at: https://github.com/squix78/json-streaming-parser
-#include <JsonListener.h>
+//#include <JsonListener.h>
+#include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
+
 // For display of WiFi connection status
 #include <Ticker.h>
 
@@ -110,8 +122,8 @@ See more at https://thingpulse.com
 
 #define LED_TYPE            WS2812B
 #define COLOR_ORDER         GRB
-#define LED_PIN_LEFT        4 
-#define LED_PIN_RIGHT       5
+#define LED_PIN_LEFT        18
+#define LED_PIN_RIGHT       19
 #define NUM_LEDS_PER_STRIP  7
 #define RAINBOW_INCREMENT   36  // Hue increment between arcs of the rainbow
 
@@ -124,6 +136,16 @@ CRGB right[NUM_LEDS_PER_STRIP];
 // Setting brightness to 50% will work
 #define BRIGHTNESS      128
 #define FRAMES_PER_SECOND  120
+
+// Add optional button to force the ESP board into config mode at startup
+// comment out the following line
+#define HAS_BUTTON
+#ifdef HAS_BUTTON
+  #define BUTTON_PIN  23
+#endif
+
+const char* AP_STATION_NAME = "RainbowConnection";
+
 /***************************
  * Begin Settings
  **************************/
@@ -163,14 +185,27 @@ const boolean IS_METRIC = false;
  
 OpenWeatherMapCurrentData currentWeather;
 OpenWeatherMapCurrent currentWeatherClient;
+
 WiFiManager wifiManager;
+WiFiManagerParameter custom_location_id("location_id", "Open Weather Map Location ID", OPEN_WEATHER_MAP_LOCATION_ID.c_str(), 32);
+WiFiManagerParameter custom_app_id("app_id", "Open Weather Map App ID", OPEN_WEATHER_MAP_APP_ID.c_str(), 64);
+
+boolean doSaveConfig = false;
+
+//callback notifying us of the need to save config
+void saveConfigCallback () {
+  Serial.println("Should save config");
+  doSaveConfig = true;
+}
+
 Ticker ticker;
+
 
 #define WIND_SPEED_THRESHOLD 25  //mph - considered "windy" over this value
 float   currentTemperature = 70.0; // Fahrenheit, b/c I live in the US
 CRGB    curTempColor = CRGB(255,255,255);
 
-// Indicates whether the last call to check the 
+// Indicates whether the last call to check the weather information returned a value
 boolean bTemperature = false;
 boolean bWind = false;
 boolean bRain = false;
@@ -271,11 +306,64 @@ void configModeCallback(WiFiManager *myWiFiManager) {
   ticker.attach_ms(10, flash, 0);
 }
 
+boolean readConfig() {
+  Serial.println("mounting FS...");
+
+  if (SPIFFS.begin()) {
+    Serial.println("mounted file system");
+    if (SPIFFS.exists("/config.json")) {
+      Serial.println("reading config file");
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile) {
+        Serial.println("opened config file");
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file
+        std::unique_ptr<char[]> buf(new char[size]);
+
+        configFile.readBytes(buf.get(), size);
+        /*
+        DynamicJsonBuffer jsonBuffer;
+        JsonObject& json = jsonBuffer.parseObject(buf.get());
+        json.printTo(Serial);
+        if(json.success()) {
+          Serial.println("\nparsed json");
+
+          OPEN_WEATHER_MAP_LOCATION_ID = json["location_id"];
+          OPEN_WEATHER_MAP_APP_ID = json["app_id"];
+          */
+          DynamicJsonDocument doc(1024);
+          DeserializationError  error = deserializeJson(doc, buf.get());
+          if (error) {
+            Serial.println("desirialization error");
+          } else {
+            JsonObject obj = doc.as<JsonObject>();
+            OPEN_WEATHER_MAP_LOCATION_ID = obj["location_id"].as<char*>();
+            OPEN_WEATHER_MAP_APP_ID = obj["app_id"].as<char*>();
+            Serial.print("read location id ");
+            Serial.println(OPEN_WEATHER_MAP_LOCATION_ID);
+            Serial.print("read app id ");
+            Serial.println(OPEN_WEATHER_MAP_APP_ID);
+          }
+          configFile.close();
+        } else {
+          Serial.println("failed to load json config");
+        }
+        
+      }
+  } else {
+    Serial.println("failed to mount FS");
+  }
+}
+
 
 void setup() {
   Serial.begin(115200);
   Serial.println();
   Serial.println();
+
+#ifdef HAS_BUTTON
+  pinMode(BUTTON_PIN, INPUT);
+#endif
 
   // Configure FastLED for the two strips
   FastLED.addLeds<LED_TYPE, LED_PIN_LEFT, COLOR_ORDER>(left, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
@@ -283,25 +371,89 @@ void setup() {
   FastLED.setBrightness(BRIGHTNESS);
   
   // Ensure we keep milliamps under 250 for Adafruit Feather ESP8266 Huzzah
+#ifdef ESP8266
   set_max_power_in_volts_and_milliamps(3.3, 250);
+#endif
 
   // Show animation while connecting to Wifi
   ticker.attach_ms(80, tick, 30);
 
+  
+  /*
+  // Need to call format once (and only once, or we delete our data) to set up spiffs
+  bool formatted = SPIFFS.format();
+  if (formatted) Serial.println("successfully formatted");
+  else Serial.println("failed in formatting");
+  */
+  
+  readConfig();
+
   // For testing purposes
   // wifiManager.resetSettings();
+  wifiManager.addParameter(&custom_location_id);
+  wifiManager.addParameter(&custom_app_id);
 
   // Indicate need to re-enter WiFi credentials with a callback function
   wifiManager.setAPCallback(configModeCallback);
+
+  // Set the save configuration notification callback
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
 
   // Set timeout for connection attempt
   wifiManager.setTimeout(90);
   
   // Connect to WiFi
-  if (wifiManager.autoConnect("RainbowConnection")) {
-    Serial.print("Connected to WiFi");
+#ifdef HAS_BUTTON
+  if ( digitalRead(BUTTON_PIN) == LOW ) {
+    Serial.println("Starting configuration portal");
+    wifiManager.startConfigPortal(AP_STATION_NAME);
+  } else {
+    if (wifiManager.autoConnect(AP_STATION_NAME)) {
+      Serial.println("Connected to WiFi");
+    }
   }
+#else
+  if (wifiManager.autoConnect(AP_STATION_NAME)) {
+    Serial.println("Connected to WiFi");
+  }
+#endif
   ticker.detach();
+
+  OPEN_WEATHER_MAP_APP_ID = custom_app_id.getValue();
+  OPEN_WEATHER_MAP_LOCATION_ID = custom_location_id.getValue();
+
+  if (doSaveConfig) {
+    Serial.println("Saving configuration");
+    /*
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject& json = jsonBuffer.createObject();
+    json["location_id"] = OPEN_WEATHER_MAP_LOCATION_ID;
+    json["app_id"] = OPEN_WEATHER_MAP_APP_ID;
+  
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile) {
+      Serial.println("failed to open config file for writing");
+    } else {
+      json.printTo(Serial);
+      json.printTo(configFile);
+      configFile.close();
+    }
+    */
+    DynamicJsonDocument doc(1024);
+    doc["location_id"] = OPEN_WEATHER_MAP_LOCATION_ID.c_str();
+    doc["app_id"] = OPEN_WEATHER_MAP_APP_ID.c_str();
+    //serializeJson(doc,Serial);
+
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile) {
+      Serial.println("failed to open config file for writing");
+    } else {
+      serializeJson(doc,configFile);
+      configFile.close();
+    }
+    //end save
+  
+  }
 
 }
 
