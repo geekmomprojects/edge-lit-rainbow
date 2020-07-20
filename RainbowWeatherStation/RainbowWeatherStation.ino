@@ -9,7 +9,11 @@
  * library manager:  ESP8266WiFi, ESP8266HTTPClient, FastLED, JsonListener, Ticker, WiFiManager
  *
  *     ************ Getting Weather Information from Open Weather Map ************
- *     
+ *
+ * UPDATE - July 19, 2020. You can now set the Open Weather Map App ID and Location ID in the code
+ * directly, or you can set them through the WiFi Manager. They are stored in SPIFFS as WiFiManager
+ * custom parameters
+ *
  * This code relies on data from OpenWeatherMap (https://openweathermap.org/), a free 
  * online weather service with an easily accessible API. Functions for accessing it are included 
  * in the file "OpenWeatherMapCurrent.cpp"
@@ -122,8 +126,10 @@ See more at https://thingpulse.com
 
 #define LED_TYPE            WS2812B
 #define COLOR_ORDER         GRB
-#define LED_PIN_LEFT        18
-#define LED_PIN_RIGHT       19
+
+#define LED_PIN_LEFT        19  //13 on Lolin, 19 on DevKit
+#define LED_PIN_RIGHT       18  //12 on Lolin, 18 on DevKit
+
 #define NUM_LEDS_PER_STRIP  7
 #define RAINBOW_INCREMENT   36  // Hue increment between arcs of the rainbow
 
@@ -141,7 +147,7 @@ CRGB right[NUM_LEDS_PER_STRIP];
 // comment out the following line
 #define HAS_BUTTON
 #ifdef HAS_BUTTON
-  #define BUTTON_PIN  23
+  #define BUTTON_PIN  23  // 23 on DevKit, 14 on Lolin
 #endif
 
 const char* AP_STATION_NAME = "RainbowConnection";
@@ -156,7 +162,7 @@ const int WEATHER_UPDATE_INTERVAL_SECS = 12*60;  // Update weather reading every
 // OpenWeatherMap Settings
 // Sign up here to get an API key:
 // https://docs.thingpulse.com/how-tos/openweathermap-key/
-String OPEN_WEATHER_MAP_APP_ID = "ENTER YOUR OPEN WEATHER MAP ID HERE";
+String OPEN_WEATHER_MAP_APP_ID = "WeatherMapID";
 
 /*
 Go to https://openweathermap.org/find?q= and search for a location. Go through the
@@ -165,7 +171,7 @@ data for. It'll be a URL like https://openweathermap.org/city/2657896. The numbe
 at the end is what you assign to the constant below.
  */
 
-String OPEN_WEATHER_MAP_LOCATION_ID = "ENTER YOUR WEATHER MAP LOCATION ID HERE"; 
+String OPEN_WEATHER_MAP_LOCATION_ID = "LocationID"; 
 //String OPEN_WEATHER_MAP_LOCATION_ID = "5368361"; // Westwood, CA
 
 // Pick a language code from this list:
@@ -187,8 +193,6 @@ OpenWeatherMapCurrentData currentWeather;
 OpenWeatherMapCurrent currentWeatherClient;
 
 WiFiManager wifiManager;
-WiFiManagerParameter custom_location_id("location_id", "Open Weather Map Location ID", OPEN_WEATHER_MAP_LOCATION_ID.c_str(), 32);
-WiFiManagerParameter custom_app_id("app_id", "Open Weather Map App ID", OPEN_WEATHER_MAP_APP_ID.c_str(), 64);
 
 boolean doSaveConfig = false;
 
@@ -199,7 +203,6 @@ void saveConfigCallback () {
 }
 
 Ticker ticker;
-
 
 #define WIND_SPEED_THRESHOLD 25  //mph - considered "windy" over this value
 float   currentTemperature = 70.0; // Fahrenheit, b/c I live in the US
@@ -308,6 +311,7 @@ void configModeCallback(WiFiManager *myWiFiManager) {
 
 boolean readConfig() {
   Serial.println("mounting FS...");
+  boolean success = true;
 
   if (SPIFFS.begin()) {
     Serial.println("mounted file system");
@@ -321,20 +325,11 @@ boolean readConfig() {
         std::unique_ptr<char[]> buf(new char[size]);
 
         configFile.readBytes(buf.get(), size);
-        /*
-        DynamicJsonBuffer jsonBuffer;
-        JsonObject& json = jsonBuffer.parseObject(buf.get());
-        json.printTo(Serial);
-        if(json.success()) {
-          Serial.println("\nparsed json");
-
-          OPEN_WEATHER_MAP_LOCATION_ID = json["location_id"];
-          OPEN_WEATHER_MAP_APP_ID = json["app_id"];
-          */
           DynamicJsonDocument doc(1024);
           DeserializationError  error = deserializeJson(doc, buf.get());
           if (error) {
             Serial.println("desirialization error");
+            success = false;
           } else {
             JsonObject obj = doc.as<JsonObject>();
             OPEN_WEATHER_MAP_LOCATION_ID = obj["location_id"].as<char*>();
@@ -347,12 +342,21 @@ boolean readConfig() {
           configFile.close();
         } else {
           Serial.println("failed to load json config");
+          success = false;
         }
         
       }
   } else {
-    Serial.println("failed to mount FS");
+    Serial.println("failed to mount FS. Formatting file system.");
+    success = false;
+    boolean bFormat = SPIFFS.format();
+    if (bFormat) {
+      Serial.println("Formatting successful\n");
+    } else {
+      Serial.println("Formatting unsuccessful\n");
+    }
   }
+  return success;
 }
 
 
@@ -378,18 +382,22 @@ void setup() {
   // Show animation while connecting to Wifi
   ticker.attach_ms(80, tick, 30);
 
-  
-  /*
   // Need to call format once (and only once, or we delete our data) to set up spiffs
+  /*
   bool formatted = SPIFFS.format();
   if (formatted) Serial.println("successfully formatted");
   else Serial.println("failed in formatting");
   */
-  
+
+  // Read configuratio paramaters from SPIFFS, if any are stored
   readConfig();
 
-  // For testing purposes
+  // For testing purposes - uncommenting this will erase all stored wifiManager data
   // wifiManager.resetSettings();
+
+  // Set up parameters to hold LocationID and AppID
+  WiFiManagerParameter custom_location_id("location_id", "Find location id at https://openweathermap.org/find?q=", OPEN_WEATHER_MAP_LOCATION_ID.c_str(), 64);
+  WiFiManagerParameter custom_app_id("app_id", "Get app id from https://openweathermap.org/api", OPEN_WEATHER_MAP_APP_ID.c_str(), 64);
   wifiManager.addParameter(&custom_location_id);
   wifiManager.addParameter(&custom_app_id);
 
@@ -419,26 +427,14 @@ void setup() {
 #endif
   ticker.detach();
 
+
+  // Parameters may have changed if config mode was triggered
   OPEN_WEATHER_MAP_APP_ID = custom_app_id.getValue();
   OPEN_WEATHER_MAP_LOCATION_ID = custom_location_id.getValue();
-
+    
   if (doSaveConfig) {
     Serial.println("Saving configuration");
-    /*
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& json = jsonBuffer.createObject();
-    json["location_id"] = OPEN_WEATHER_MAP_LOCATION_ID;
-    json["app_id"] = OPEN_WEATHER_MAP_APP_ID;
-  
-    File configFile = SPIFFS.open("/config.json", "w");
-    if (!configFile) {
-      Serial.println("failed to open config file for writing");
-    } else {
-      json.printTo(Serial);
-      json.printTo(configFile);
-      configFile.close();
-    }
-    */
+    
     DynamicJsonDocument doc(1024);
     doc["location_id"] = OPEN_WEATHER_MAP_LOCATION_ID.c_str();
     doc["app_id"] = OPEN_WEATHER_MAP_APP_ID.c_str();
@@ -452,6 +448,9 @@ void setup() {
       configFile.close();
     }
     //end save
+
+    OPEN_WEATHER_MAP_APP_ID = custom_app_id.getValue();
+    OPEN_WEATHER_MAP_LOCATION_ID = custom_location_id.getValue();
   
   }
 
@@ -667,10 +666,12 @@ void updateData() {
   currentWeatherClient.updateCurrentById(&currentWeather, OPEN_WEATHER_MAP_APP_ID, OPEN_WEATHER_MAP_LOCATION_ID);
   
   currentTemperature = currentWeather.temp;
-  curTempColor = tempToColor(currentTemperature);
-  bTemperature = true;
-  Serial.print("Current temperature: ");
-  Serial.println(currentTemperature);
+  if (currentTemperature) {
+    curTempColor = tempToColor(currentTemperature);
+    bTemperature = true;
+    Serial.print("Current temperature: ");
+    Serial.println(currentTemperature);
+  }
   
   currentWeather.main.toLowerCase();
   bWind = (currentWeather.windSpeed > WIND_SPEED_THRESHOLD) ? true : false;
