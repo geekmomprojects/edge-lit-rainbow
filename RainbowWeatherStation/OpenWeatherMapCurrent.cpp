@@ -49,7 +49,7 @@ String OpenWeatherMapCurrent::buildUrl(String appId, String locationParameter) {
 }
 
 void OpenWeatherMapCurrent::doUpdate(OpenWeatherMapCurrentData *data, String url) {
-  unsigned long lostTest = 10000UL;
+  unsigned long lostTest = 4000UL;
   unsigned long lost_do = millis();
   this->weatherItemCounter = 0;
   this->data = data;
@@ -69,17 +69,13 @@ void OpenWeatherMapCurrent::doUpdate(OpenWeatherMapCurrentData *data, String url
   if(httpCode > 0) {
 
     WiFiClient * client = http.getStreamPtr();
-
-    while(client->connected() || client->available()) {
+    while(client->connected() || client->available() > 0) {
+      
       while((size = client->available()) > 0) {
-		if ((millis() - lost_do) > lostTest) {
-			Serial.println ("lost in client with a timeout");
-			client->stop();
-			ESP.restart();
-	    }
         c = client->read();
+        //Serial.println(c);
+        //Serial.println('.');
         if (c == '{' || c == '[') {
-
           isBody = true;
         }
         if (isBody) {
@@ -87,6 +83,12 @@ void OpenWeatherMapCurrent::doUpdate(OpenWeatherMapCurrentData *data, String url
         }
         // give WiFi and TCP/IP libraries a chance to handle pending events
         yield();
+      }
+      
+      if ((millis() - lost_do) > lostTest) {
+        Serial.println ("timed out");
+        client->stop();
+        //ESP.restart();
       }
     }
   }
