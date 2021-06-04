@@ -98,17 +98,30 @@ SOFTWARE.
 See more at https://thingpulse.com
 */
 #include <FS.h>                     // This needs to be first or it all breaks
-#include "SPIFFS.h"
+
 
 #ifdef ESP32
-  #include <WiFi.h>
-  #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
-  #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal      
+
+  #define USE_LittleFS
+  #include <FS.h>
+    #ifdef USE_LittleFS
+      #define SPIFFS LITTLEFS
+      #include <LITTLEFS.h> 
+    #else
+      #include <SPIFFS.h>
+    #endif 
+    
+    #include <WiFi.h>
+    #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
+    #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal      
+  
 #endif
 
 #ifdef ESP8266
   #include <ESP8266WiFi.h>
   #include <ESP8266HTTPClient.h>
+  #define FASTLED_ALLOW_INTERRUPTS 0
+  #define FASTLED_INTERRUPT_RETRY_COUNT 1
 #endif
 
 #include <WiFiManager.h>  //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
@@ -124,14 +137,14 @@ See more at https://thingpulse.com
 
 #include <FastLED.h>
 
-#define LED_TYPE            WS2812B
+#define LED_TYPE            WS2812
 #define COLOR_ORDER         GRB
 
-#define LED_PIN_LEFT        19  //13 on Lolin, 19 on DevKit
-#define LED_PIN_RIGHT       18  //12 on Lolin, 18 on DevKit
+#define LED_PIN_LEFT       12  //13 on Lolin, 19 on DevKit, 12 on Wemos D1 Mini
+#define LED_PIN_RIGHT      14  //12 on Lolin, 18 on DevKit, 14 on Wemos D1 Mini
 
 #define NUM_LEDS_PER_STRIP  7
-#define RAINBOW_INCREMENT   36  // Hue increment between arcs of the rainbow
+#define RAINBOW_INCREMENT  36 // Hue increment between arcs of the rainbow
 
 // Two separate LED strips for left/right sides of rainbow
 CRGB left[NUM_LEDS_PER_STRIP];
@@ -147,7 +160,7 @@ CRGB right[NUM_LEDS_PER_STRIP];
 // comment out the following line
 #define HAS_BUTTON
 #ifdef HAS_BUTTON
-  #define BUTTON_PIN  23  // 23 on DevKit, 14 on Lolin
+  #define BUTTON_PIN 13  // 23 on DevKit, 14 on Lolin, 13 on Wemos D1 Mini
 #endif
 
 const char* AP_STATION_NAME = "RainbowConnection";
@@ -306,12 +319,13 @@ void flash(int hue) {
 // that attention is neaded and WiFi credentials must be re-entered
 void configModeCallback(WiFiManager *myWiFiManager) {
   ticker.detach();  // Release the old ticker function
-  ticker.attach_ms(10, flash, 0);
+  ticker.attach_ms(10, flash, 192);
 }
 
 boolean readConfig() {
   Serial.println("mounting FS...");
   boolean success = true;
+  //int startTime = millis();
 
   if (SPIFFS.begin()) {
     Serial.println("mounted file system");
@@ -348,12 +362,16 @@ boolean readConfig() {
       }
   } else {
     Serial.println("failed to mount FS. Formatting file system.");
+    ticker.detach();  // Release the old ticker function
+    ticker.attach_ms(10, flash, 160);  // Change flash color to indicate difficulty
     success = false;
     boolean bFormat = SPIFFS.format();
     if (bFormat) {
       Serial.println("Formatting successful\n");
     } else {
       Serial.println("Formatting unsuccessful\n");
+      ticker.detach();  // Release the old ticker function
+      ticker.attach_ms(10, flash, 0);  // Change flash color to indicate difficulty
     }
   }
   return success;
@@ -362,7 +380,7 @@ boolean readConfig() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println();
+  Serial.println("Starting");
   Serial.println();
 
 #ifdef HAS_BUTTON
@@ -370,14 +388,15 @@ void setup() {
 #endif
 
   // Configure FastLED for the two strips
-  FastLED.addLeds<LED_TYPE, LED_PIN_LEFT, COLOR_ORDER>(left, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
-  FastLED.addLeds<LED_TYPE, LED_PIN_RIGHT, COLOR_ORDER>(right, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+  //FastLED.addLeds<LED_TYPE, LED_PIN_LEFT, COLOR_ORDER>(left, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+  //FastLED.addLeds<LED_TYPE, LED_PIN_RIGHT, COLOR_ORDER>(right, NUM_LEDS_PER_STRIP).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE, LED_PIN_LEFT, COLOR_ORDER>(left, NUM_LEDS_PER_STRIP);
+  FastLED.addLeds<LED_TYPE, LED_PIN_RIGHT, COLOR_ORDER>(right, NUM_LEDS_PER_STRIP);
   FastLED.setBrightness(BRIGHTNESS);
   
-  // Ensure we keep milliamps under 250 for Adafruit Feather ESP8266 Huzzah
-#ifdef ESP8266
+  // Ensure we keep milliamps under 250mA
   set_max_power_in_volts_and_milliamps(3.3, 250);
-#endif
+
 
   // Show animation while connecting to Wifi
   ticker.attach_ms(80, tick, 30);
@@ -390,7 +409,7 @@ void setup() {
   */
 
   // Read configuratio paramaters from SPIFFS, if any are stored
-  readConfig();
+  boolean gotConfig = readConfig();
 
   // For testing purposes - uncommenting this will erase all stored wifiManager data
   // wifiManager.resetSettings();
@@ -405,15 +424,16 @@ void setup() {
   wifiManager.setAPCallback(configModeCallback);
 
   // Set the save configuration notification callback
+  wifiManager.setBreakAfterConfig(true); // needed to ensure saveConvigCallback will still get called even if connection is unsuccessful
   wifiManager.setSaveConfigCallback(saveConfigCallback);
 
   // Set timeout for connection attempt
   wifiManager.setTimeout(90);
-  
+  wifiManager.setBreakAfterConfig(true); // needed to ensure saveConvigCallback will still get called even if connection is unsuccessful
   // Connect to WiFi
 #ifdef HAS_BUTTON
   if ( digitalRead(BUTTON_PIN) == LOW ) {
-    Serial.println("Starting configuration portal");
+    Serial.println("qfiguration portal");
     wifiManager.startConfigPortal(AP_STATION_NAME);
   } else {
     if (wifiManager.autoConnect(AP_STATION_NAME)) {
@@ -444,18 +464,21 @@ void setup() {
     if (!configFile) {
       Serial.println("failed to open config file for writing");
     } else {
-      serializeJson(doc,configFile);
+      Serial.println("serializing JSON values to config file");
+      size_t nBytes = serializeJson(doc,configFile);
       configFile.close();
+      Serial.print("Serialized ");
+      Serial.print(nBytes);
+      Serial.println(" bytes to file 'config.json'");
+      serializeJson(doc,Serial);
     }
     //end save
 
     OPEN_WEATHER_MAP_APP_ID = custom_app_id.getValue();
     OPEN_WEATHER_MAP_LOCATION_ID = custom_location_id.getValue();
-  
   }
 
 }
-
 
 // Uses FastLED's built in rainbow function. If the global variable bInitializeRainbowAnimation is true
 // will first fade from current color pattern to the rainbow before starting the rainbow animation. Otherwise
@@ -473,7 +496,7 @@ boolean rainbow()
     bInitializeRainbowAnimation = false;
     lastStartTime = millis();
     for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
-      hsv2rgb_spectrum(CHSV(gHue +i*RAINBOW_INCREMENT, 255, 255), destArray[i]); 
+      hsv2rgb_spectrum(CHSV((gHue +i*RAINBOW_INCREMENT)%255, 255, 255), destArray[i]); 
       leftCopy[i] = left[i];
       rightCopy[i] = right[i];   
     }
@@ -493,6 +516,13 @@ boolean rainbow()
     fill_rainbow( left, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
     fill_rainbow( right, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
     return true;
+  }
+}
+
+// updates the rainbow. can be displayed by ticker
+void rainbowWithUpdate() {
+  if (rainbow()) {
+    FastLED.show();
   }
 }
 
@@ -615,28 +645,44 @@ int nextAnimation() {
     /* For debugging purposes. Uncomment the code 
      *  below to simulate particular weather conditions
     */
-//    bDisplayRain = true;
-//    bDisplaySnow = true;
-//    bDisplayWind = true;
-//    currentTemperature = 86;
-//    curTempColor = tempToColor(currentTemperature);
+    //bDisplayRain = true;
+    //bDisplaySnow = true;
+    //bDisplayWind = true;
+    //currentTemperature = 52;
+    //curTempColor = tempToColor(currentTemperature);
     /* end debugging */
   }
   return animDurations[gCurrentAnimation];
 }
 
+
+
+// If connected to wifi retrieves weather conditions. Updates status of display variables
+void checkWeather() {
+
+  if (WiFi.status() == WL_CONNECTED) {
+    updateData();
+  } else {
+    bTemperature = false;  
+    bWind = false;
+    bRain = false;
+    bSnow = false;
+  }
+}
+
+
+boolean bDoFirstWeatherCall = true;
 void loop() {
 
+  // Wait 10 sec to check weather the first time. It seems to help
+  if (bDoFirstWeatherCall && millis() > 10000) {
+    bDoFirstWeatherCall = false;
+    checkWeather();
+  }
+  
   // Pull weather data from OpenWeather
   EVERY_N_SECONDS( WEATHER_UPDATE_INTERVAL_SECS ) {
-    if (WiFi.status() == WL_CONNECTED) {
-      updateData();
-    } else {
-      bTemperature = false;  
-      bWind = false;
-      bRain = false;
-      bSnow = false;
-    }
+    checkWeather();
   }
 
   // call the current animation. Functions return true if LED values have changed
@@ -652,7 +698,7 @@ void loop() {
   }
 
   // periodically update the base hue
-  EVERY_N_MILLISECONDS( 30 ) { gHue++; } // slowly cycle the "base color" through the rainbow
+  EVERY_N_MILLISECONDS( 30 ) { gHue = (gHue + 1) % 255; } // slowly cycle the "base color" through the rainbow
 
   // Insert a delay for moderate framerate
   FastLED.delay(1000/FRAMES_PER_SECOND);
