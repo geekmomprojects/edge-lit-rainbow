@@ -26,9 +26,9 @@ While it is attempting to connect to WiFi, the rainbow will cycle through lighti
 
 When running on an ESP32 or ESP8266 with the supplied Arduino code, the rainbow will enter configuration mode automatically on startup if it cannot connect to WiFi, either because it doesn't have stored SSID/Password or because the stored SSID/Password don't connect. You can also force the ESP into configuration mode at startup by grounding the button pin (easiest if you physically connect a button to the pin).
 
-Once it is in configuration mode, you can configure the connection parameters by connecting to the local access point named "RainbowConnection". You will be directed to a configuration page like the one below:
+Once it is in configuration mode, you can configure the connection parameters by connecting to the local access point named "RainbowConnection". 
 
-(TBD)
+Currently, you may find additional information about configuring the connection parameters here: <a href="http://brightwearables.com/rainbowconnect/">http://brightwearables.com/rainbowconnect/</a>
 
 
 # Update - July 19, 2020
@@ -37,3 +37,11 @@ The following changes have been added to the Arduino code:
 - The code now runs on ESP32 as well as ESP8266 boards
 - Code is added to support an optional push putton which starts the program in "Configuration Mode". In Configuration mode, the ESP board boots as a WiFi access point named "RainbowConnection". Logging int access point allows the user to configure the board to connect to local WiFi.
 - The OpenWeatherMap LocationID and AppID are stored in spiffs and can be set through the Access Point when the ESP is in Configuration Mode
+
+# Update - August 6, 2021
+
+The code has been streamlined a bit and successfully tested on both an ESP8266 and ESP32
+- The Arduino code has been reconfigured to remove any dependence on external OpenWeatherMap access libraries, and the Arduino sketch is now contained in a single file.
+- The Arduino library dependencies have changed. See the comments at the top of the sketch to find which libraries you will need for your board
+- The pin for the LED strips and buttons have changed. Look for the variables LED_PIN_LEFT, LED_PIN_RIGHT and BUTTON_PIN to find/change their values
+
