@@ -1,3 +1,5 @@
+
+
 /************************************************************************************
  * The RainbowWeatherStation sketch is adapted from Adafruit's esp8266 weather station 
  * (https://github.com/adafruit/esp8266-weather-station-color) which, in turn, was adapted
@@ -6,8 +8,26 @@
  *                      ************ Required Libraries ************
  *                      
  * The following libraries are required for this application, and are available through the Arduino
- * library manager:  ESP8266WiFi, ESP8266HTTPClient, FastLED, JsonListener, Ticker, WiFiManager
- *
+ * library manager, regardless of which board you use:
+ * 
+ *      ESP8266WebServer
+ *      FastLED
+ *      ArduinoJson
+ *      Ticker
+ *      WiFiManager
+ *    
+ * The following libraries are specific to the platform you are running the code on:
+ * Running on ESP8266 (e.g. Adafruit HUZZAH, Wemos D1 mini): 
+ * 
+ *      ESP8266WiFi
+ *      ESP8266HTTPClient
+ *      
+ * Running on ESP32 (e.g. DEVKIT V1 or Adafruit HUZZAH32)
+ * 
+ *      WiFi
+ *      HTTPClient
+ *      
+ *      
  *     ************ Getting Weather Information from Open Weather Map ************
  *
  * UPDATE - July 19, 2020. You can now set the Open Weather Map App ID and Location ID in the code
@@ -15,8 +35,7 @@
  * custom parameters
  *
  * This code relies on data from OpenWeatherMap (https://openweathermap.org/), a free 
- * online weather service with an easily accessible API. Functions for accessing it are included 
- * in the file "OpenWeatherMapCurrent.cpp"
+ * online weather service with an easily accessible API. 
  * 
  * To run the RainbowWeatherStation code on your own ESP8266, you must find and set the following two 
  * variables to values you obtain from OpenWeatherMap:
@@ -99,9 +118,7 @@ See more at https://thingpulse.com
 */
 #include <FS.h>                     // This needs to be first or it all breaks
 
-
 #ifdef ESP32
-
   #define USE_LittleFS
   #include <FS.h>
     #ifdef USE_LittleFS
@@ -111,12 +128,14 @@ See more at https://thingpulse.com
       #include <SPIFFS.h>
     #endif 
     
-    #include <WiFi.h>
-    #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
-    #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal      
-  
+  #include <WiFi.h>
+  #include <HTTPClient.h>
 #endif
 
+#include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
+
+      
+  
 #ifdef ESP8266
   #include <ESP8266WiFi.h>
   #include <ESP8266HTTPClient.h>
@@ -124,24 +143,20 @@ See more at https://thingpulse.com
   #define FASTLED_INTERRUPT_RETRY_COUNT 1
 #endif
 
-#include <WiFiManager.h>  //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+#include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal Works for ESP32 and ESP8266, despite the library name
+#include <ArduinoJson.h>
 
-// JSON Streaming Parser library available in lib manager or at: https://github.com/squix78/json-streaming-parser
-//#include <JsonListener.h>
-#include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
+#include <WiFiManager.h>  //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
 // For display of WiFi connection status
 #include <Ticker.h>
-
-#include "OpenWeatherMapCurrent.h"
-
 #include <FastLED.h>
 
 #define LED_TYPE            WS2812
 #define COLOR_ORDER         GRB
 
-#define LED_PIN_LEFT       12  //13 on Lolin, 19 on DevKit, 12 on Wemos D1 Mini
-#define LED_PIN_RIGHT      14  //12 on Lolin, 18 on DevKit, 14 on Wemos D1 Mini
+#define LED_PIN_LEFT       13  //13 on Lolin, 19 on DevKit, 12 on Wemos D1 Mini, 
+#define LED_PIN_RIGHT      12  //12 on Lolin, 18 on DevKit, 14 on Wemos D1 Mini, 
 
 #define NUM_LEDS_PER_STRIP  7
 #define RAINBOW_INCREMENT  36 // Hue increment between arcs of the rainbow
@@ -160,10 +175,12 @@ CRGB right[NUM_LEDS_PER_STRIP];
 // comment out the following line
 #define HAS_BUTTON
 #ifdef HAS_BUTTON
-  #define BUTTON_PIN 13  // 23 on DevKit, 14 on Lolin, 13 on Wemos D1 Mini
+  #define BUTTON_PIN 14  // 23 on DevKit, 14 on Lolin, 13 on Wemos D1 Mini,
 #endif
 
 const char* AP_STATION_NAME = "RainbowConnection";
+String weatherQuery, jsonBuffer;
+StaticJsonDocument<2048> jsonWeather;
 
 /***************************
  * Begin Settings
@@ -201,9 +218,6 @@ const boolean IS_METRIC = false;
 /***************************
  * End Settings
  **************************/
- 
-OpenWeatherMapCurrentData currentWeather;
-OpenWeatherMapCurrent currentWeatherClient;
 
 WiFiManager wifiManager;
 
@@ -451,6 +465,7 @@ void setup() {
   // Parameters may have changed if config mode was triggered
   OPEN_WEATHER_MAP_APP_ID = custom_app_id.getValue();
   OPEN_WEATHER_MAP_LOCATION_ID = custom_location_id.getValue();
+  weatherQuery = "http://api.openweathermap.org/data/2.5/weather?id=" + OPEN_WEATHER_MAP_LOCATION_ID + "&appid=" + OPEN_WEATHER_MAP_APP_ID + "&units=imperial";
     
   if (doSaveConfig) {
     Serial.println("Saving configuration");
@@ -704,25 +719,68 @@ void loop() {
   FastLED.delay(1000/FRAMES_PER_SECOND);
 }
 
+String httpGETRequest(const char* serverName) {
+  WiFiClient client;
+  HTTPClient http;
+    
+  // Your IP address with path or Domain name with URL path 
+  http.begin(client, serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "{}"; 
+  
+  if (httpResponseCode>0) {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+    payload = http.getString();
+  }
+  else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
+}
 
 // Pull weather data from openWeatherMap and update the stored current weather conditions and temperature
 void updateData() {
-  currentWeatherClient.setMetric(IS_METRIC); 
-  currentWeatherClient.setLanguage(OPEN_WEATHER_MAP_LANGUAGE);
-  currentWeatherClient.updateCurrentById(&currentWeather, OPEN_WEATHER_MAP_APP_ID, OPEN_WEATHER_MAP_LOCATION_ID);
-  
-  currentTemperature = currentWeather.temp;
+  Serial.print("Query: ");
+  Serial.println(weatherQuery);
+  jsonBuffer = httpGETRequest(weatherQuery.c_str());
+  Serial.println(jsonBuffer);
+
+  DeserializationError error = deserializeJson(jsonWeather, jsonBuffer.c_str());
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  // Update temperature
+  bTemperature = true;
+  currentTemperature = jsonWeather["main"]["temp"];
   if (currentTemperature) {
     curTempColor = tempToColor(currentTemperature);
     bTemperature = true;
     Serial.print("Current temperature: ");
     Serial.println(currentTemperature);
   }
-  
-  currentWeather.main.toLowerCase();
-  bWind = (currentWeather.windSpeed > WIND_SPEED_THRESHOLD) ? true : false;
-  bSnow = (currentWeather.main.indexOf("snow") >= 0) ? true : false;
-  bRain = (currentWeather.main.indexOf("rain") >= 0) ? true : false;
-  Serial.print("Weather description: ");
-  Serial.println(currentWeather.main);
+
+  // Parse windspeed
+  float windSpeed = jsonWeather["wind"]["speed"];
+  Serial.print("Wind speed: ");
+  Serial.println(windSpeed);
+  bWind = (windSpeed > WIND_SPEED_THRESHOLD) ? true : false;
+
+  // Check weather description for rain or snow
+  String mainWeather = jsonWeather["weather"][0]["main"];
+  Serial.print("Main: ");
+  Serial.println(mainWeather);
+  mainWeather.toLowerCase();
+  bSnow = (mainWeather.indexOf("snow") >= 0) ? true : false;
+  bRain = (mainWeather.indexOf("rain") >= 0) ? true : false;
 }
