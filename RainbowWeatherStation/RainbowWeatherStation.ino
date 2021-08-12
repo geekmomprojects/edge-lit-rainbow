@@ -194,7 +194,6 @@ const int WEATHER_UPDATE_INTERVAL_SECS = 12*60;  // Update weather reading every
 // Sign up here to get an API key:
 // https://docs.thingpulse.com/how-tos/openweathermap-key/
 String OPEN_WEATHER_MAP_APP_ID = "WeatherMapID";
-
 /*
 Go to https://openweathermap.org/find?q= and search for a location. Go through the
 result set and select the entry closest to the actual location you want to display 
@@ -512,7 +511,7 @@ boolean rainbow()
     bInitializeRainbowAnimation = false;
     lastStartTime = millis();
     for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
-      hsv2rgb_spectrum(CHSV((gHue +i*RAINBOW_INCREMENT)%255, 255, 255), destArray[i]); 
+      hsv2rgb_spectrum(CHSV((gHue +i*RAINBOW_INCREMENT)%255, 255, 255), destArray[NUM_LEDS_PER_STRIP - i - 1]); 
       leftCopy[i] = left[i];
       rightCopy[i] = right[i];   
     }
@@ -528,9 +527,15 @@ boolean rainbow()
     }
     return true;    
   } else {
+    CRGB backwardsRainbow[NUM_LEDS_PER_STRIP];
     // FastLED's built-in rainbow generator
-    fill_rainbow( left, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
-    fill_rainbow( right, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
+    fill_rainbow( backwardsRainbow, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
+    for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
+      left[NUM_LEDS_PER_STRIP-i-1] = backwardsRainbow[i];
+      right[NUM_LEDS_PER_STRIP-i-1] = backwardsRainbow[i];
+    }
+    //fill_rainbow( left, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
+    //fill_rainbow( right, NUM_LEDS_PER_STRIP, gHue, RAINBOW_INCREMENT);
     return true;
   }
 }
@@ -761,6 +766,12 @@ void updateData() {
   if (error) {
     Serial.print(F("deserializeJson() failed: "));
     Serial.println(error.f_str());
+    return;
+  }
+
+  int responseCode = jsonWeather["cod"];
+  if (responseCode == 401) {
+    Serial.print(F("Response code 401 - request failed "));
     return;
   }
 
