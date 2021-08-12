@@ -155,8 +155,8 @@ See more at https://thingpulse.com
 #define LED_TYPE            WS2812
 #define COLOR_ORDER         GRB
 
-#define LED_PIN_LEFT       13  //13 on Lolin, 19 on DevKit, 12 on Wemos D1 Mini, 
-#define LED_PIN_RIGHT      12  //12 on Lolin, 18 on DevKit, 14 on Wemos D1 Mini, 
+#define LED_PIN_LEFT       12  //13 on Lolin, 19 on DevKit, 12 on Wemos D1 Mini, 
+#define LED_PIN_RIGHT      13  //12 on Lolin, 18 on DevKit, 13 on Wemos D1 Mini, 
 
 #define NUM_LEDS_PER_STRIP  7
 #define RAINBOW_INCREMENT  36 // Hue increment between arcs of the rainbow
@@ -170,12 +170,13 @@ CRGB right[NUM_LEDS_PER_STRIP];
 // Setting brightness to 50% will work
 #define BRIGHTNESS      128
 #define FRAMES_PER_SECOND  120
+const int frameRateMS = (int) (1000/FRAMES_PER_SECOND);
 
 // Add optional button to force the ESP board into config mode at startup
 // comment out the following line
 #define HAS_BUTTON
 #ifdef HAS_BUTTON
-  #define BUTTON_PIN 14  // 23 on DevKit, 14 on Lolin, 13 on Wemos D1 Mini,
+  #define BUTTON_PIN 14  // 23 on DevKit, 14 on Lolin, 14 on Wemos D1 Mini,
 #endif
 
 const char* AP_STATION_NAME = "RainbowConnection";
@@ -356,7 +357,7 @@ boolean readConfig() {
           DynamicJsonDocument doc(1024);
           DeserializationError  error = deserializeJson(doc, buf.get());
           if (error) {
-            Serial.println("desirialization error");
+            Serial.println("deserialization error");
             success = false;
           } else {
             JsonObject obj = doc.as<JsonObject>();
@@ -564,7 +565,7 @@ boolean rainAnimation() {
   }
   return false;
 }
-
+                    
 //Add white sparkles for snow - returns true if updated display
 boolean snowAnimation() {
   static long lastUpdateTime = millis();
@@ -688,9 +689,9 @@ void checkWeather() {
 
 boolean bDoFirstWeatherCall = true;
 void loop() {
-
   // Wait 10 sec to check weather the first time. It seems to help
   if (bDoFirstWeatherCall && millis() > 10000) {
+    Serial.println("Checking weather!!!");
     bDoFirstWeatherCall = false;
     checkWeather();
   }
@@ -700,23 +701,26 @@ void loop() {
     checkWeather();
   }
 
-  // call the current animation. Functions return true if LED values have changed
-  if (animFunctions[gCurrentAnimation]()) {
+  // call the current animation at a reasonable framerate. Functions return true if LED values have changed
+  EVERY_N_MILLISECONDS(frameRateMS) {
+    if (animFunctions[gCurrentAnimation]()) {
     // Update the physical LED strips
     FastLED.show();
-  }
-
+    }
+  }  
+  
   // Allows each animation to run for its own duration
   EVERY_N_SECONDS_I( patternTimer, animDurations[gCurrentAnimation] ) { 
     int duration = nextAnimation();
     patternTimer.setPeriod( duration ); 
   }
-
+  
   // periodically update the base hue
   EVERY_N_MILLISECONDS( 30 ) { gHue = (gHue + 1) % 255; } // slowly cycle the "base color" through the rainbow
-
+  
   // Insert a delay for moderate framerate
-  FastLED.delay(1000/FRAMES_PER_SECOND);
+  //FastLED.delay(1000/FRAMES_PER_SECOND);
+  //delay(1000/FRAMES_PER_SECOND);
 }
 
 String httpGETRequest(const char* serverName) {
