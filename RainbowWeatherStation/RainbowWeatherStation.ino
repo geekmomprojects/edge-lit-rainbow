@@ -761,6 +761,10 @@ void updateData() {
   Serial.println(weatherQuery);
   jsonBuffer = httpGETRequest(weatherQuery.c_str());
   Serial.println(jsonBuffer);
+  if (jsonBuffer.length() < 10) {
+    Serial.println(F("Error: Response too short"));
+    return;
+  }
 
   DeserializationError error = deserializeJson(jsonWeather, jsonBuffer.c_str());
   if (error) {
